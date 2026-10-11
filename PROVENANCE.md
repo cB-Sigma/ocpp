@@ -52,6 +52,16 @@ without it, so a required property sent as null still fails
 (`TestDeviationsNullProperty`). `ValidateMessage`, `ValidateJSON` and
 `DecodeIn` are unchanged and still refuse it.
 
+For v0.2.0 (2026-10-11 and 12) the `csms` and `chargepoint` packages,
+`check.go`, `pnc16.go`, the generator in `internal/gen21` and the `v21`
+package were written new, in our own words, from the documents below
+and the OCA 1.6 Plug & Charge application note. `v21/messages.go` is
+generated from the embedded 2.1 schemas: only property names, types,
+required lists and enumeration values are taken; no description is
+copied. The roles were designed before seanlee0923/ocpp v0.3.0 was
+read; that project was then read for features and run as an interop
+peer only, and no code was taken from it.
+
 ## Sources
 
 | Area (files) | Followed | Licence of the source | Taken |
@@ -62,6 +72,9 @@ without it, so a required property sent as null still fails
 | OCPP-S 1.6 (soap.go, soapwsdl.go) | OCPP-S 1.6 and its errata; the OCPP-S 1.6 WSDLs | CC BY-ND 4.0 | facts only |
 | Signed messages (signed.go) | OCPP 2.x part 4 clause 7 | CC BY-ND 4.0 | facts only |
 | Schemas and appendices (oca/) | OCPP 1.6 documentation package (2025-04-29); OCPP 2.0.1 part 3 schemas (2020-03-31) and appendices v1.5; OCPP 2.1 part 3 schemas (2025-01-23) and appendices v2.1 | CC BY-ND 4.0 | the files, unmodified |
+| Plug & Charge over 1.6 (pnc16.go) | OCA application note "Using ISO 15118 Plug & Charge with OCPP 1.6" v1.0 (2020-09-16) | CC BY-ND 4.0 | facts only (message and field names, lengths, enumeration values, the vendorId) |
+| Reconnection back-off (chargepoint) | OCPP 2.0.1 and 2.1 part 2, the OCPPCommCtrlr RetryBackOff variables | CC BY-ND 4.0 | facts only |
+| 2.1 Go types (v21/messages.go) | the embedded OCPP 2.1 part 3 schemas | CC BY-ND 4.0 | names, types and enumerations, generated; no descriptions |
 | Interop peer (interop/peer/cp.py) | our own script calling mobilityhouse/ocpp 2.1.0 (MIT), installed from PyPI at test time | MIT | nothing copied |
 
 ## Tests
@@ -69,11 +82,12 @@ without it, so a required property sent as null still fails
 | Test | Source |
 |---|---|
 | unit tests at the module root | written from the documents above; the schema tests check every embedded OCA file against its published digest |
-| interop/ | mobilityhouse/ocpp 2.1.0's charge point (1.6, 2.0.1, 2.1) and ocpp-go v0.19.0's charge point (1.6) and charging station (2.0.1) against a central system on this module |
+| interop/ | mobilityhouse/ocpp 2.1.0's charge point (1.6, 2.0.1, 2.1) and ocpp-go v0.19.0's charge point (1.6) and charging station (2.0.1) against the `csms` package; `chargepoint` against ocpp-go's central system (1.6) and CSMS (2.0.1); seanlee0923/ocpp v0.3.0's station and CSMS (2.1) against `csms` and `chargepoint` |
 
 ## Other implementations
 
 The comparison in README.md was made on 2026-10-11 from the source of
 lorenzodonini/ocpp-go v0.19.0, mobilityhouse/ocpp 2.1.0 and SteVe 3.14.1,
+and on 2026-10-12 of seanlee0923/ocpp v0.3.0,
 read for features only. A line-by-line similarity check against them was
 not done; no code was taken from them.

@@ -1,11 +1,12 @@
 // Copyright 2026 Abhinav Gautam
 // SPDX-License-Identifier: Apache-2.0
 
-// Package interop runs charge points written by others against a central
-// system built from this module alone (ocpp.Conn, DecodeIn, ValidateJSON,
-// CheckAnswer): mobilityhouse/ocpp's (Python, peer/cp.py, in a container;
-// skipped unless SIGMA_OCPP_INTEROP=1 and Docker answers) and
-// lorenzodonini/ocpp-go's (in process).
+// Package interop runs charge points and central systems written by others
+// against this module's roles: mobilityhouse/ocpp's charge point (Python,
+// peer/cp.py, in a container; skipped unless SIGMA_OCPP_INTEROP=1 and
+// Docker answers), lorenzodonini/ocpp-go's charge point and central system
+// and seanlee0923/ocpp's station and CSMS (both in process), against the
+// csms and chargepoint packages.
 package interop
 
 import (
@@ -17,9 +18,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/coder/websocket"
-
 	"github.com/cB-Sigma/ocpp"
+	"github.com/cB-Sigma/ocpp/csms"
 )
 
 // received is one CALL the central system got, with the CALLERROR it
@@ -30,71 +30,55 @@ type received struct {
 	err        *ocpp.RPCError
 }
 
-// central is an OCPP-J central system for 1.6, 2.0.1 and 2.1 on this
-// module's RPC layer: it checks every request against the OCA schemas
-// (1.6 and 2.0.1 also through the Go types) and its own answers too.
+// central is a central system for 1.6, 2.0.1 and 2.1 built on the csms
+// package: it checks every request against the OCA schemas (1.6 also
+// through the Go types) and its own answers too, and records what it got.
 type central struct {
+	srv    *csms.Server
 	mu     sync.Mutex
-	conns  map[string]*ocpp.Conn
 	nextTx int
 	got    chan received
 	conned chan string
 }
 
 func newCentral() *central {
-	return &central{conns: map[string]*ocpp.Conn{}, nextTx: 100, got: make(chan received, 64), conned: make(chan string, 4)}
+	s := &central{nextTx: 100, got: make(chan received, 64), conned: make(chan string, 4)}
+	s.srv = csms.New(csms.Config{
+		Timeout:   10 * time.Second,
+		OnConnect: func(st *csms.Station) { s.conned <- st.ID() },
+		OnInvalid: func(st *csms.Station, action string, payload json.RawMessage, verr *ocpp.RPCError) error {
+			s.got <- received{id: st.ID(), action: action, payload: payload, err: verr}
+			return verr
+		},
+	})
+	actions := map[string]bool{}
+	for a := range ocpp.V16In {
+		actions[a] = true
+	}
+	for a := range ocpp.V201In {
+		actions[a] = true
+	}
+	for a := range ocpp.In21 {
+		actions[a] = true
+	}
+	for a := range actions {
+		s.srv.Handle(a, s.handle)
+	}
+	return s
 }
 
 func (s *central) conn(id string) *ocpp.Conn {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.conns[id]
+	if st := s.srv.Station(id); st != nil {
+		return st.Conn()
+	}
+	return nil
 }
 
-func (s *central) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	id := r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:]
-	ws, err := websocket.Accept(w, r, &websocket.AcceptOptions{Subprotocols: ocpp.Subprotocols([]string{ocpp.V21, ocpp.V201, ocpp.V16})})
-	if err != nil {
-		return
-	}
-	version := ocpp.VersionOf(ws.Subprotocol())
-	if version == "" {
-		_ = ws.Close(websocket.StatusPolicyViolation, "no OCPP subprotocol")
-		return
-	}
-	c := ocpp.NewConn(ws, version, 10*time.Second, nil)
-	c.SetHandler(func(ctx context.Context, action string, payload json.RawMessage) (any, error) {
-		return s.handle(id, version, action, payload)
-	})
-	s.mu.Lock()
-	s.conns[id] = c
-	s.mu.Unlock()
-	s.conned <- id
-	_ = c.Serve(r.Context(), 0)
-}
+func (s *central) ServeHTTP(w http.ResponseWriter, r *http.Request) { s.srv.ServeHTTP(w, r) }
 
-func (s *central) handle(id, version, action string, payload json.RawMessage) (any, error) {
-	var verr *ocpp.RPCError
-	switch version {
-	case ocpp.V16:
-		if md, ok := ocpp.V16In[action]; ok {
-			_, verr = ocpp.DecodeIn(version, action, md, payload)
-		} else {
-			verr = ocpp.RPCErrorf(ocpp.KindNotImplemented, "%s is not handled", action)
-		}
-	case ocpp.V201:
-		if md, ok := ocpp.V201In[action]; ok {
-			_, verr = ocpp.DecodeIn(version, action, md, payload)
-		} else {
-			verr = ocpp.RPCErrorf(ocpp.KindNotImplemented, "%s is not handled", action)
-		}
-	default:
-		_, verr = ocpp.ValidateJSON(version, action, false, payload)
-	}
-	s.got <- received{id: id, action: action, payload: payload, err: verr}
-	if verr != nil {
-		return nil, verr
-	}
+func (s *central) handle(ctx context.Context, st *csms.Station, payload json.RawMessage) (any, error) {
+	action, version := ocpp.ActionOf(ctx), st.Version()
+	s.got <- received{id: st.ID(), action: action, payload: payload}
 	now := time.Now().UTC().Format(time.RFC3339)
 	var res any = map[string]any{}
 	switch action {
@@ -121,7 +105,7 @@ func (s *central) handle(id, version, action string, payload json.RawMessage) (a
 	case "DataTransfer":
 		res = map[string]any{"status": "UnknownVendorId"}
 	}
-	return ocpp.CheckAnswer(version, action, res, payload)
+	return res, nil // csms checks it against the response schema
 }
 
 // next returns the next CALL the central system got.

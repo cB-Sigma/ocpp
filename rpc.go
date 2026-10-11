@@ -271,6 +271,11 @@ type relayIDKey struct{}
 
 type msgIDKey struct{}
 
+type actionKey struct{}
+
+// ActionOf is the action of the CALL or SEND a handler runs for.
+func ActionOf(ctx context.Context) string { v, _ := ctx.Value(actionKey{}).(string); return v }
+
 // MessageID is the ID of the CALL a handler runs for.
 func MessageID(ctx context.Context) string { v, _ := ctx.Value(msgIDKey{}).(string); return v }
 
@@ -406,6 +411,7 @@ func (c *Conn) handleLoop(ctx context.Context) {
 			return
 		case f := <-c.inq:
 			hctx, cancel := context.WithTimeout(ctx, c.timeout)
+			hctx = context.WithValue(hctx, actionKey{}, f.action)
 			if f.typ == msgSend {
 				_, _ = c.safeHandle(context.WithValue(hctx, sendKey{}, true), f)
 				cancel()
